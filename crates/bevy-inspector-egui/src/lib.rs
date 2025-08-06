@@ -138,8 +138,6 @@
 pub mod bevy_inspector;
 pub mod inspector_egui_impls;
 pub mod inspector_options;
-#[cfg(feature = "bevy_render")]
-pub mod quick;
 pub mod reflect_inspector;
 pub mod restricted_world_view;
 

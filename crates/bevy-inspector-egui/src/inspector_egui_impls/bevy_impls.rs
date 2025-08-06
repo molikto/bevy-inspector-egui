@@ -67,23 +67,24 @@ impl InspectorPrimitive for Entity {
                     .id_salt(id)
                     .show(ui, |ui| {
                         let _queue = CommandQueue::default();
-                        crate::bevy_inspector::ui_for_entity_components(
-                            world,
-                            queue.as_deref_mut(),
-                            entity,
-                            ui,
-                            id,
-                            env.type_registry,
-                        );
-                        if options.despawnable
-                            && world.contains_entity(entity)
-                            && let Some(queue) = queue
-                            && egui_utils::label_button(ui, "✖ Despawn", egui::Color32::RED)
-                        {
-                            queue.push(move |world: &mut World| {
-                                world.entity_mut(entity).despawn();
-                            });
-                        }
+                        // FIXME
+                        // crate::bevy_inspector::ui_for_entity_components(
+                        //     world,
+                        //     queue.as_deref_mut(),
+                        //     entity,
+                        //     ui,
+                        //     id,
+                        //     env.type_registry,
+                        // );
+                        // if options.despawnable
+                        //     && world.contains_entity(entity)
+                        //     && let Some(queue) = queue
+                        //     && egui_utils::label_button(ui, "✖ Despawn", egui::Color32::RED)
+                        // {
+                        //     queue.push(move |world: &mut World| {
+                        //         world.entity_mut(entity).despawn();
+                        //     });
+                        // }
                     });
             }
         }
