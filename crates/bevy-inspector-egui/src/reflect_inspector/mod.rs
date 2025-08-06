@@ -126,74 +126,21 @@ pub struct Context<'a> {
     pub queue: Option<&'a mut CommandQueue>,
 }
 
-/// Function which will be executed for every field recursively, which can be used to skip regular traversal.
-///
-/// This can be used to recognize `Handle<T>` types and display them as their actual value instead.
-/// Returning `None` means that no short circuiting is required, and `Some(changed)` means that the value was short-circuited
-/// and changed if the boolean is true.
-pub type ShortCircuitFn = fn(
-    &mut InspectorUi<'_, '_>,
-    value: &mut dyn PartialReflect,
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    options: &dyn Any,
-) -> Option<bool>;
-/// Function which will be executed for every field recursively, which can be used to skip regular traversal, `_readonly` variant
-///
-/// This can be used to recognize `Handle<T>` types and display them as their actual value instead.
-/// Returning `None` means that no short circuiting is required, and `Some(changed)` means that the value was short-circuited
-/// and changed if the boolean is true.
-pub type ShortCircuitFnReadonly = fn(
-    &mut InspectorUi<'_, '_>,
-    value: &dyn PartialReflect,
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    options: &dyn Any,
-) -> Option<()>;
-/// Function which will be executed for every field recursively, which can be used to skip regular traversal, `_many` variant
-///
-/// This can be used to recognize `Handle<T>` types and display them as their actual value instead.
-/// Returning `None` means that no short circuiting is required, and `Some(changed)` means that the value was short-circuited
-/// and changed if the boolean is true.
-pub type ShortCircuitFnMany = fn(
-    &mut InspectorUi<'_, '_>,
-    type_id: TypeId,
-    type_name: &str,
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    options: &dyn Any,
-    values: &mut [&mut dyn PartialReflect],
-    projector: &dyn ProjectorReflect,
-) -> Option<bool>;
-
 pub struct InspectorUi<'a, 'c> {
     /// Reference to the [`TypeRegistry`]
     pub type_registry: &'a TypeRegistry,
     /// [`Context`] with additional data that can be used to display values
     pub context: &'a mut Context<'c>,
-
-    /// Function which will be executed for every field recursively, which can be used to skip regular traversal.
-    /// This can be used to recognize `Handle<T>` types and display them as their actual value instead.
-    pub short_circuit: ShortCircuitFn,
-    /// Same as [`short_circuit`](InspectorUi::short_circuit), but for read only usage.
-    pub short_circuit_readonly: ShortCircuitFnReadonly,
-    pub short_circuit_many: ShortCircuitFnMany,
 }
 
 impl<'a, 'c> InspectorUi<'a, 'c> {
     pub fn new(
         type_registry: &'a TypeRegistry,
         context: &'a mut Context<'c>,
-        short_circuit: Option<ShortCircuitFn>,
-        short_circuit_readonly: Option<ShortCircuitFnReadonly>,
-        short_circuit_many: Option<ShortCircuitFnMany>,
     ) -> Self {
         Self {
             type_registry,
             context,
-            short_circuit: short_circuit.unwrap_or(|_, _, _, _, _| None),
-            short_circuit_readonly: short_circuit_readonly.unwrap_or(|_, _, _, _, _| None),
-            short_circuit_many: short_circuit_many.unwrap_or(|_, _, _, _, _, _, _, _| None),
         }
     }
 
@@ -201,7 +148,7 @@ impl<'a, 'c> InspectorUi<'a, 'c> {
         type_registry: &'a TypeRegistry,
         context: &'a mut Context<'c>,
     ) -> Self {
-        InspectorUi::new(type_registry, context, None, None, None)
+        InspectorUi::new(type_registry, context)
     }
 }
 
@@ -245,10 +192,6 @@ impl InspectorUi<'_, '_> {
             && let Some(value) = value.try_as_reflect_mut()
         {
             return s.execute(value.as_any_mut(), ui, options, id, self.reborrow());
-        }
-
-        if let Some(changed) = (self.short_circuit)(self, value, ui, id, options) {
-            return changed;
         }
 
         match value.reflect_mut() {
@@ -298,10 +241,6 @@ impl InspectorUi<'_, '_> {
             && let Some(value) = value.try_as_reflect()
         {
             s.execute_readonly(value.as_any(), ui, options, id, self.reborrow());
-            return;
-        }
-
-        if let Some(()) = (self.short_circuit_readonly)(self, value, ui, id, options) {
             return;
         }
 
@@ -366,12 +305,6 @@ impl InspectorUi<'_, '_> {
             .get_type_data::<InspectorEguiImpl>(type_id)
         {
             return s.execute_many(ui, options, id, self.reborrow(), values, projector);
-        }
-
-        if let Some(changed) =
-            (self.short_circuit_many)(self, type_id, name, ui, id, options, values, projector)
-        {
-            return changed;
         }
 
         match info {
@@ -1781,9 +1714,6 @@ impl<'a, 'c> InspectorUi<'a, 'c> {
         InspectorUi {
             type_registry: self.type_registry,
             context: self.context,
-            short_circuit: self.short_circuit,
-            short_circuit_readonly: self.short_circuit_readonly,
-            short_circuit_many: self.short_circuit_many,
         }
     }
 
