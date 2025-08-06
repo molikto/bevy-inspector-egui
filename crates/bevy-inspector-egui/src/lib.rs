@@ -135,7 +135,6 @@
 //!
 //! **A:** Implement [`InspectorPrimitive`](crate::inspector_egui_impls::InspectorPrimitive) and call `app.register_type_data::<T, InspectorEguiImpl>`.
 
-pub mod bevy_inspector;
 pub mod inspector_egui_impls;
 pub mod inspector_options;
 pub mod reflect_inspector;
@@ -201,8 +200,6 @@ impl bevy_app::Plugin for DefaultInspectorConfigPlugin {
 
         inspector_options::default_options::register_default_options(&mut type_registry);
         inspector_egui_impls::register_std_impls(&mut type_registry);
-        inspector_egui_impls::register_glam_impls(&mut type_registry);
-        inspector_egui_impls::register_bevy_impls(&mut type_registry);
     }
 }
 
