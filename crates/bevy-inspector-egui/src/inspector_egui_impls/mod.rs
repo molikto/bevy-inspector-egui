@@ -1,7 +1,7 @@
 //! Custom UI implementations for specific types. Check [`InspectorPrimitive`] for an example.
 
 use crate::{
-    reflect_inspector::{InspectorUi, ProjectorReflect, errors::no_multiedit},
+    reflect_inspector::{InspectorUi, errors::no_multiedit},
     utils::pretty_type_name,
 };
 use bevy_platform::time::Instant;
@@ -18,14 +18,7 @@ type InspectorEguiImplFn =
     fn(&mut dyn Any, &mut egui::Ui, &dyn Any, egui::Id, InspectorUi<'_, '_>) -> bool;
 type InspectorEguiImplFnReadonly =
     fn(&dyn Any, &mut egui::Ui, &dyn Any, egui::Id, InspectorUi<'_, '_>);
-type InspectorEguiImplFnMany = for<'a> fn(
-    &mut egui::Ui,
-    &dyn Any,
-    egui::Id,
-    InspectorUi<'_, '_>,
-    &mut [&mut dyn PartialReflect],
-    &dyn ProjectorReflect,
-) -> bool;
+
 
 /// Custom UI implementation for a concrete type.
 ///
@@ -80,34 +73,6 @@ pub trait InspectorPrimitive: Reflect {
     );
 }
 
-fn ui_many_vtable<T: Reflect + PartialEq + Clone + Default + InspectorPrimitive>(
-    ui: &mut egui::Ui,
-    options: &dyn Any,
-    id: egui::Id,
-    env: InspectorUi<'_, '_>,
-    values: &mut [&mut dyn bevy_reflect::PartialReflect],
-    projector: &dyn ProjectorReflect,
-) -> bool {
-    let same = crate::inspector_egui_impls::iter_all_eq(values.iter_mut().map(|value| {
-        projector(*value)
-            .try_downcast_mut::<T>()
-            .expect("non-fully-reflected value passed to ui_many_vtable")
-    }));
-
-    let mut temp = same.cloned().unwrap_or_default();
-    if T::ui(&mut temp, ui, options, id, env) {
-        for value in values.iter_mut() {
-            let value = projector(*value)
-                .try_downcast_mut::<T>()
-                .expect("non-fully-reflected value passed to ui_many_vtable");
-            *value = temp.clone();
-        }
-
-        return true;
-    }
-    false
-}
-
 fn ui_vtable<T: InspectorPrimitive>(
     val: &mut dyn Any,
     ui: &mut egui::Ui,
@@ -137,28 +102,19 @@ fn ui_readonly_vtable<T: InspectorPrimitive>(
 pub struct InspectorEguiImpl {
     fn_mut: InspectorEguiImplFn,
     fn_readonly: InspectorEguiImplFnReadonly,
-    fn_many: InspectorEguiImplFnMany,
 }
 
 impl<T: InspectorPrimitive> FromType<T> for InspectorEguiImpl {
     fn from_type() -> Self {
-        InspectorEguiImpl::of_with_many::<T>(many_unimplemented::<T>)
+        InspectorEguiImpl::of::<T>()
     }
 }
 
 impl InspectorEguiImpl {
-    pub fn of<T: InspectorPrimitive + PartialEq + Clone + Default>() -> Self {
+    pub fn of<T: InspectorPrimitive>() -> Self {
         InspectorEguiImpl {
             fn_mut: ui_vtable::<T>,
             fn_readonly: ui_readonly_vtable::<T>,
-            fn_many: ui_many_vtable::<T>,
-        }
-    }
-    pub fn of_with_many<T: InspectorPrimitive>(fn_many: InspectorEguiImplFnMany) -> Self {
-        InspectorEguiImpl {
-            fn_mut: ui_vtable::<T>,
-            fn_readonly: ui_readonly_vtable::<T>,
-            fn_many,
         }
     }
 
@@ -166,12 +122,10 @@ impl InspectorEguiImpl {
     pub fn new(
         fn_mut: InspectorEguiImplFn,
         fn_readonly: InspectorEguiImplFnReadonly,
-        fn_many: InspectorEguiImplFnMany,
     ) -> Self {
         InspectorEguiImpl {
             fn_mut,
             fn_readonly,
-            fn_many,
         }
     }
 
@@ -195,59 +149,28 @@ impl InspectorEguiImpl {
     ) {
         (self.fn_readonly)(value, ui, options, id, env)
     }
-    pub fn execute_many<'a, 'c: 'a, 'e>(
-        &'a self,
-        ui: &mut egui::Ui,
-        options: &dyn Any,
-        id: egui::Id,
-        env: InspectorUi<'_, '_>,
-        values: &mut [&mut dyn PartialReflect],
-        projector: &dyn ProjectorReflect,
-    ) -> bool {
-        (self.fn_many)(ui, options, id, env, values, projector)
-    }
-}
 
-fn many_unimplemented<T: Any>(
-    ui: &mut egui::Ui,
-    _options: &dyn Any,
-    _id: egui::Id,
-    _env: InspectorUi<'_, '_>,
-    _values: &mut [&mut dyn PartialReflect],
-    _projector: &dyn ProjectorReflect,
-) -> bool {
-    no_multiedit(ui, &pretty_type_name::<T>());
-    false
 }
 
 fn add<T: InspectorPrimitive + TypePath + PartialEq + Clone>(type_registry: &mut TypeRegistry) {
     type_registry.register_type_data::<T, InspectorEguiImpl>();
 }
-fn add_of_with_many<T: InspectorPrimitive>(
-    type_registry: &mut TypeRegistry,
-    fn_many: InspectorEguiImplFnMany,
-) {
-    type_registry
-        .get_mut(TypeId::of::<T>())
-        .unwrap_or_else(|| panic!("{} not registered", std::any::type_name::<T>()))
-        .insert(InspectorEguiImpl::of_with_many::<T>(fn_many));
-}
 
 /// Register [`InspectorEguiImpl`]s for primitive rust types as well as standard library types
 #[rustfmt::skip]
 pub fn register_std_impls(type_registry: &mut TypeRegistry) {
-    add_of_with_many::<f32>(type_registry, std_impls::number_ui_many::<f32>);
-    add_of_with_many::<f64>(type_registry, std_impls::number_ui_many::<f64>);
-    add_of_with_many::<i8>(type_registry, std_impls::number_ui_many::<i8>);
-    add_of_with_many::<i16>(type_registry, std_impls::number_ui_many::<i16>);
-    add_of_with_many::<i32>(type_registry, std_impls::number_ui_many::<i32>);
-    add_of_with_many::<i64>(type_registry, std_impls::number_ui_many::<i64>);
-    add_of_with_many::<isize>(type_registry, std_impls::number_ui_many::<isize>);
-    add_of_with_many::<u8>(type_registry, std_impls::number_ui_many::<u8>);
-    add_of_with_many::<u16>(type_registry, std_impls::number_ui_many::<u16>);
-    add_of_with_many::<u32>(type_registry, std_impls::number_ui_many::<u32>);
-    add_of_with_many::<u64>(type_registry, std_impls::number_ui_many::<u64>);
-    add_of_with_many::<usize>(type_registry, std_impls::number_ui_many::<usize>);
+    add::<f32>(type_registry);
+    add::<f64>(type_registry);
+    add::<i8>(type_registry);
+    add::<i16>(type_registry);
+    add::<i32>(type_registry);
+    add::<i64>(type_registry);
+    add::<isize>(type_registry);
+    add::<u8>(type_registry);
+    add::<u16>(type_registry);
+    add::<u32>(type_registry);
+    add::<u64>(type_registry);
+    add::<usize>(type_registry);
     add::<bool>(type_registry);
     add::<String>(type_registry);
     add::<Cow<str>>(type_registry);
@@ -264,7 +187,7 @@ pub fn register_std_impls(type_registry: &mut TypeRegistry) {
     add::<TypeId>(type_registry);
 
     add::<std::time::Duration>(type_registry);
-    add_of_with_many::<Instant>(type_registry, many_unimplemented::<Instant>);
+    add::<Instant>(type_registry);
 }
 
 

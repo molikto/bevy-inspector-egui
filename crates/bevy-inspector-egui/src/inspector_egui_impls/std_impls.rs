@@ -10,7 +10,6 @@ use crate::{
         InspectorOptionsType,
         std_options::{NumberDisplay, NumberOptions, RangeOptions},
     },
-    reflect_inspector::ProjectorReflect,
 };
 use std::{any::Any, time::Duration};
 
@@ -166,39 +165,6 @@ fn display_number<T: egui::emath::Numeric>(
         }
     }
     changed
-}
-
-pub fn number_ui_many<T>(
-    ui: &mut egui::Ui,
-    _: &dyn Any,
-    id: egui::Id,
-    _env: InspectorUi<'_, '_>,
-    values: &mut [&mut dyn PartialReflect],
-    projector: &dyn ProjectorReflect,
-) -> bool
-where
-    T: Reflect + egui::emath::Numeric + AddAssign<T>,
-{
-    let same = iter_all_eq(
-        values
-            .iter_mut()
-            .map(|value| *projector(*value).try_downcast_ref::<T>().unwrap()),
-    )
-    .map(T::to_f64);
-
-    change_slider(ui, id, same, |change, overwrite| {
-        for value in values.iter_mut() {
-            let value = projector(*value)
-                .try_downcast_mut::<T>()
-                .expect("non-fully-reflected value passed to number_ui_many");
-            let change = T::from_f64(change);
-            if overwrite {
-                *value = change;
-            } else {
-                *value += change;
-            }
-        }
-    })
 }
 
 impl InspectorPrimitive for bool {

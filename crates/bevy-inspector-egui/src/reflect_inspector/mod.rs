@@ -86,9 +86,6 @@ use std::{
 
 pub(crate) mod errors;
 
-pub trait ProjectorReflect: Fn(&mut dyn PartialReflect) -> &mut dyn PartialReflect {}
-
-impl<T> ProjectorReflect for T where T: Fn(&mut dyn PartialReflect) -> &mut dyn PartialReflect {}
 
 /// Display the value without any [`Context`] or short circuiting behaviour.
 ///
@@ -263,74 +260,6 @@ impl InspectorUi<'_, '_> {
         }
     }
 
-    pub fn ui_for_reflect_many(
-        &mut self,
-        type_id: TypeId,
-        name: &str,
-        ui: &mut egui::Ui,
-        id: egui::Id,
-        values: &mut [&mut dyn PartialReflect],
-        projector: &dyn ProjectorReflect,
-    ) -> bool {
-        self.ui_for_reflect_many_with_options(type_id, name, ui, id, &(), values, projector)
-    }
-
-    pub fn ui_for_reflect_many_with_options(
-        &mut self,
-        type_id: TypeId,
-        name: &str,
-        ui: &mut egui::Ui,
-        id: egui::Id,
-        options: &dyn Any,
-        values: &mut [&mut dyn PartialReflect],
-        projector: &dyn ProjectorReflect,
-    ) -> bool {
-        let Some(registration) = self.type_registry.get(type_id) else {
-            errors::not_in_type_registry(ui, name);
-            return false;
-        };
-        let info = registration.type_info();
-
-        let mut options = options;
-        if options.is::<()>()
-            && let Some(data) = self
-                .type_registry
-                .get_type_data::<ReflectInspectorOptions>(type_id)
-        {
-            options = &data.0;
-        }
-
-        if let Some(s) = self
-            .type_registry
-            .get_type_data::<InspectorEguiImpl>(type_id)
-        {
-            return s.execute_many(ui, options, id, self.reborrow(), values, projector);
-        }
-
-        match info {
-            TypeInfo::Struct(info) => {
-                self.ui_for_struct_many(info, ui, id, options, values, projector)
-            }
-            TypeInfo::TupleStruct(info) => {
-                self.ui_for_tuple_struct_many(info, ui, id, options, values, projector)
-            }
-            TypeInfo::Tuple(info) => {
-                self.ui_for_tuple_many(info, ui, id, options, values, projector)
-            }
-            TypeInfo::List(info) => self.ui_for_list_many(info, ui, id, options, values, projector),
-            TypeInfo::Array(info) => {
-                errors::no_multiedit(ui, &pretty_type_name_str(info.type_path()));
-                false
-            }
-            TypeInfo::Map(info) => {
-                errors::no_multiedit(ui, &pretty_type_name_str(info.type_path()));
-                false
-            }
-            TypeInfo::Enum(info) => self.ui_for_enum_many(info, ui, id, options, values, projector),
-            TypeInfo::Opaque(info) => self.ui_for_value_many(info, ui, id, options),
-            TypeInfo::Set(info) => self.ui_for_set_many(info, ui, id, options, values, projector),
-        }
-    }
 }
 
 enum ListOp {
@@ -476,40 +405,6 @@ impl InspectorUi<'_, '_> {
         });
     }
 
-    fn ui_for_struct_many(
-        &mut self,
-        info: &StructInfo,
-        ui: &mut egui::Ui,
-        id: egui::Id,
-        options: &dyn Any,
-        values: &mut [&mut dyn PartialReflect],
-        projector: impl ProjectorReflect,
-    ) -> bool {
-        let mut changed = false;
-        Grid::new(id).show(ui, |ui| {
-            for (i, field) in info.iter().enumerate() {
-                let _response = ui.label(field.name());
-                #[cfg(feature = "documentation")]
-                show_docs(_response, field.docs());
-
-                changed |= self.ui_for_reflect_many_with_options(
-                    field.type_id(),
-                    field.type_path(),
-                    ui,
-                    id.with(i),
-                    inspector_options_struct_field(options, i),
-                    values,
-                    &|a| match projector(a).reflect_mut() {
-                        ReflectMut::Struct(strukt) => strukt.field_at_mut(i).unwrap(),
-                        _ => unreachable!(),
-                    },
-                );
-                ui.end_row();
-            }
-        });
-        changed
-    }
-
     fn ui_for_tuple_struct(
         &mut self,
         value: &mut dyn TupleStruct,
@@ -558,41 +453,6 @@ impl InspectorUi<'_, '_> {
                 );
                 ui.end_row();
             }
-        })
-    }
-
-    fn ui_for_tuple_struct_many(
-        &mut self,
-        info: &TupleStructInfo,
-        ui: &mut egui::Ui,
-        id: egui::Id,
-        options: &dyn Any,
-        values: &mut [&mut dyn PartialReflect],
-        projector: impl ProjectorReflect,
-    ) -> bool {
-        maybe_grid(info.field_len(), ui, id, |ui, label| {
-            info.iter()
-                .enumerate()
-                .map(|(i, field)| {
-                    if label {
-                        ui.label(i.to_string());
-                    }
-                    let changed = self.ui_for_reflect_many_with_options(
-                        field.type_id(),
-                        field.type_path(),
-                        ui,
-                        id.with(i),
-                        inspector_options_struct_field(options, i),
-                        values,
-                        &|a| match projector(a).reflect_mut() {
-                            ReflectMut::TupleStruct(strukt) => strukt.field_mut(i).unwrap(),
-                            _ => unreachable!(),
-                        },
-                    );
-                    ui.end_row();
-                    changed
-                })
-                .fold(false, or)
         })
     }
 
@@ -645,41 +505,6 @@ impl InspectorUi<'_, '_> {
                 ui.end_row();
             }
         });
-    }
-
-    fn ui_for_tuple_many(
-        &mut self,
-        info: &TupleInfo,
-        ui: &mut egui::Ui,
-        id: egui::Id,
-        options: &dyn Any,
-        values: &mut [&mut dyn PartialReflect],
-        projector: impl ProjectorReflect,
-    ) -> bool {
-        maybe_grid(info.field_len(), ui, id, |ui, label| {
-            info.iter()
-                .enumerate()
-                .map(|(i, field)| {
-                    if label {
-                        ui.label(i.to_string());
-                    }
-                    let changed = self.ui_for_reflect_many_with_options(
-                        field.type_id(),
-                        field.type_path(),
-                        ui,
-                        id.with(i),
-                        inspector_options_struct_field(options, i),
-                        values,
-                        &|a| match projector(a).reflect_mut() {
-                            ReflectMut::Tuple(strukt) => strukt.field_mut(i).unwrap(),
-                            _ => unreachable!(),
-                        },
-                    );
-                    ui.end_row();
-                    changed
-                })
-                .fold(false, or)
-        })
     }
 
     /// Mutate one or more lists based on a [`ListOp`], generated by some user interaction.
@@ -821,96 +646,6 @@ impl InspectorUi<'_, '_> {
                 }
             }
         });
-    }
-
-    fn ui_for_list_many(
-        &mut self,
-        info: &ListInfo,
-        ui: &mut egui::Ui,
-        id: egui::Id,
-        options: &dyn Any,
-        values: &mut [&mut dyn PartialReflect],
-        projector: impl ProjectorReflect,
-    ) -> bool {
-        use ListOp::*;
-        let mut changed = false;
-
-        let same_len =
-            iter_all_eq(
-                values
-                    .iter_mut()
-                    .map(|value| match projector(*value).reflect_mut() {
-                        ReflectMut::List(l) => l.len(),
-                        _ => unreachable!(),
-                    }),
-            );
-
-        let Some(len) = same_len else {
-            ui.label("lists have different sizes, cannot multiedit");
-            return changed;
-        };
-
-        ui.vertical(|ui| {
-            let mut op = None;
-
-            if len == 0 && ui_for_empty_list(ui) {
-                op = Some(AddElement(0));
-            }
-
-            for i in 0..len {
-                let mut items_at_i: Vec<&mut dyn PartialReflect> = values
-                    .iter_mut()
-                    .map(|value| match projector(*value).reflect_mut() {
-                        ReflectMut::List(list) => list.get_mut(i).unwrap(),
-                        _ => unreachable!(),
-                    })
-                    .collect();
-
-                egui::Grid::new((id, i)).show(ui, |ui| {
-                    ui.label(i.to_string());
-                    ui.horizontal_top(|ui| {
-                        changed |= self.ui_for_reflect_many_with_options(
-                            info.item_ty().id(),
-                            info.type_path(),
-                            ui,
-                            id.with(i),
-                            options,
-                            items_at_i.as_mut_slice(),
-                            &|a| a,
-                        );
-                    });
-                    ui.end_row();
-                    let item_op = ui_for_list_controls(ui, i, len);
-                    if item_op.is_some() {
-                        op = item_op;
-                    }
-                });
-
-                if i != len - 1 {
-                    ui.separator();
-                }
-            }
-
-            let error_id = id.with("error");
-            let error = ui.data_mut(|data| *data.get_temp_mut_or_default::<bool>(error_id));
-            if error {
-                errors::no_default_value(ui, info.type_path());
-            }
-            if ui.input(|input| input.pointer.any_down()) {
-                ui.data_mut(|data| data.insert_temp::<bool>(error_id, false));
-            }
-            if let Some(op) = op {
-                let lists = values
-                    .iter_mut()
-                    .map(|l| match projector(*l).reflect_mut() {
-                        ReflectMut::List(list) => list,
-                        _ => unreachable!(),
-                    });
-                changed |= self.respond_to_list_op(ui, id, lists, op);
-            }
-        });
-
-        changed
     }
 
     fn ui_for_reflect_map(
@@ -1224,118 +959,6 @@ impl InspectorUi<'_, '_> {
         });
     }
 
-    fn ui_for_set_many(
-        &mut self,
-        info: &SetInfo,
-        ui: &mut egui::Ui,
-        id: egui::Id,
-        options: &dyn Any,
-        values: &mut [&mut dyn PartialReflect],
-        projector: impl ProjectorReflect,
-    ) -> bool {
-        use SetOp::*;
-        let mut changed = false;
-
-        let same_len =
-            iter_all_eq(
-                values
-                    .iter_mut()
-                    .map(|value| match projector(*value).reflect_mut() {
-                        ReflectMut::List(l) => l.len(),
-                        _ => unreachable!(),
-                    }),
-            );
-
-        let Some(len) = same_len else {
-            ui.label("lists have different sizes, cannot multiedit");
-            return changed;
-        };
-
-        ui.vertical(|ui| {
-            let mut op = None;
-
-            if len == 0 {
-                ui_for_empty_set(ui)
-            }
-
-            let set0 = match projector(values[0]).reflect_mut() {
-                ReflectMut::Set(set) => set,
-                _ => unreachable!(),
-            };
-            let Some(TypeInfo::Set(set_info)) = set0.get_represented_type_info() else {
-                return;
-            };
-            let value_type = set_info.value_ty();
-            let reflected_values: Vec<Box<dyn PartialReflect>> =
-                set0.iter().map(|v| v.to_dynamic()).collect();
-
-            for (i, value_to_check) in reflected_values.iter().enumerate() {
-                let value_type_id = (**value_to_check).type_id();
-                egui::Grid::new((value_type_id, i)).show(ui, |ui| {
-                    // Do all sets contain this value ?
-                    if len == 1
-                        || values[1..].iter_mut().all(|set_to_compare| {
-                            let set_to_compare = match projector(*set_to_compare).reflect_mut() {
-                                ReflectMut::Set(set) => set,
-                                _ => unreachable!(),
-                            };
-                            set_to_compare.iter().any(|value| {
-                                value.reflect_partial_eq(value_to_check.borrow()) == Some(true)
-                            })
-                        })
-                    {
-                        // All sets contain this value: Show value
-                        ui.horizontal_top(|ui| {
-                            self.ui_for_reflect_readonly_with_options(
-                                value_to_check.borrow(),
-                                ui,
-                                // FIXME: is the id passed here correct?
-                                id.with(i),
-                                options,
-                            );
-                        });
-                        ui.horizontal_top(|ui| {
-                            if remove_button(ui).on_hover_text("Remove element").clicked() {
-                                let copy = value_to_check.to_dynamic();
-                                op = Some(RemoveElement(copy));
-                            }
-                        });
-                    } else {
-                        ui.label("Different values");
-                    }
-
-                    ui.end_row();
-                });
-                if i != len - 1 {
-                    ui.separator();
-                }
-            }
-            let op = self.set_add_element_ui(value_type, ui, id, options, &mut changed);
-
-            ui.end_row();
-
-            let error_id = id.with("error");
-            let error = ui.data_mut(|data| *data.get_temp_mut_or_default::<bool>(error_id));
-            if error {
-                errors::no_default_value(ui, info.type_path());
-            }
-            if ui.input(|input| input.pointer.any_down()) {
-                ui.data_mut(|data| data.insert_temp::<bool>(error_id, false));
-            }
-            if let Some(op) = op {
-                let sets = values
-                    .iter_mut()
-                    .map(|l| match projector(*l).reflect_mut() {
-                        ReflectMut::Set(list) => list,
-                        _ => unreachable!(),
-                    });
-                changed |= self.respond_to_sets_op(sets, op);
-            }
-        });
-
-        changed
-    }
-
     fn ui_for_array(
         &mut self,
         array: &mut dyn Array,
@@ -1448,123 +1071,6 @@ impl InspectorUi<'_, '_> {
                         .fold(false, or)
                 });
         });
-
-        changed
-    }
-
-    fn ui_for_enum_many(
-        &mut self,
-        info: &EnumInfo,
-        ui: &mut egui::Ui,
-        id: egui::Id,
-        options: &dyn Any,
-        values: &mut [&mut dyn PartialReflect],
-        projector: &dyn ProjectorReflect,
-    ) -> bool {
-        let mut changed = false;
-
-        let same_variant =
-            iter_all_eq(
-                values
-                    .iter_mut()
-                    .map(|value| match projector(*value).reflect_mut() {
-                        ReflectMut::Enum(info) => info.variant_index(),
-                        _ => unreachable!(),
-                    }),
-            );
-
-        if let Some(variant_index) = same_variant {
-            let mut variant = info.variant_at(variant_index).unwrap();
-
-            ui.vertical(|ui| {
-                let variant_changed = self.ui_for_enum_variant_select(id, ui, variant_index, info);
-                if let Some((new_variant_idx, dynamic_enum)) = variant_changed {
-                    changed = true;
-                    variant = info.variant_at(new_variant_idx).unwrap();
-
-                    for value in values.iter_mut() {
-                        let value = projector(*value);
-                        value.apply(&dynamic_enum);
-                    }
-                }
-
-                let field_len = match variant {
-                    VariantInfo::Struct(info) => info.field_len(),
-                    VariantInfo::Tuple(info) => info.field_len(),
-                    VariantInfo::Unit(_) => 0,
-                };
-
-                let always_show_label = matches!(variant, VariantInfo::Struct(_));
-                changed |=
-                    maybe_grid_label_if(field_len, ui, id, always_show_label, |ui, label| {
-                        let handle = |(field_index, field_name, field_type_id, field_type_name)| {
-                            if label {
-                                ui.label(field_name);
-                            }
-
-                            let mut variants_across: Vec<&mut dyn PartialReflect> = values
-                                .iter_mut()
-                                .map(|value| match projector(*value).reflect_mut() {
-                                    ReflectMut::Enum(value) => {
-                                        value.field_at_mut(field_index).unwrap()
-                                    }
-                                    _ => unreachable!(),
-                                })
-                                .collect();
-
-                            self.ui_for_reflect_many_with_options(
-                                field_type_id,
-                                field_type_name,
-                                ui,
-                                id.with(field_index),
-                                inspector_options_enum_variant_field(
-                                    options,
-                                    variant_index,
-                                    field_index,
-                                ),
-                                variants_across.as_mut_slice(),
-                                &|a| a,
-                            );
-
-                            ui.end_row();
-
-                            false
-                        };
-
-                        match variant {
-                            VariantInfo::Struct(info) => info
-                                .iter()
-                                .enumerate()
-                                .map(|(i, field)| {
-                                    (
-                                        i,
-                                        Cow::Borrowed(field.name()),
-                                        field.type_id(),
-                                        field.type_path(),
-                                    )
-                                })
-                                .map(handle)
-                                .fold(false, or),
-                            VariantInfo::Tuple(info) => info
-                                .iter()
-                                .enumerate()
-                                .map(|(i, field)| {
-                                    (
-                                        i,
-                                        Cow::Owned(i.to_string()),
-                                        field.type_id(),
-                                        field.type_path(),
-                                    )
-                                })
-                                .map(handle)
-                                .fold(false, or),
-                            VariantInfo::Unit(_) => false,
-                        }
-                    });
-            });
-        } else {
-            ui.label("enums have different selected variants, cannot multiedit");
-        }
 
         changed
     }
@@ -1697,16 +1203,6 @@ impl InspectorUi<'_, '_> {
         errors::reflect_value_no_impl(ui, value.reflect_short_type_path());
     }
 
-    fn ui_for_value_many(
-        &mut self,
-        info: &OpaqueInfo,
-        ui: &mut egui::Ui,
-        _id: egui::Id,
-        _options: &dyn Any,
-    ) -> bool {
-        errors::reflect_value_no_impl(ui, info.type_path());
-        false
-    }
 }
 
 impl<'a, 'c> InspectorUi<'a, 'c> {
